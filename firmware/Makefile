@@ -4,18 +4,19 @@ OUTPUT_DIRECTORY := _build
 
 SDK_ROOT := ./nRF5_SDK_16.0.0
 PROJ_DIR := .
-DEBUG ?= 1
+DEBUG ?= 0
 
 
-SOFT_DEVICE = $(SDK_ROOT)/components/softdevice/s340/hex/ANT_s340_nrf52840_6.1.1.hex
 
 ifeq ($(DEBUG), 1)
-$(OUTPUT_DIRECTORY)/nrf52840_xxaa.out: \
-  LINKER_SCRIPT  := secure_bootloader_gcc_nrf52_debug.ld
+SOFT_DEVICE = $(PROJ_DIR)/include/S340_and_TSDZ2_remote.hex
 else
-$(OUTPUT_DIRECTORY)/nrf52840_xxaa.out: \
-  LINKER_SCRIPT  := secure_bootloader_gcc_nrf52.ld
+SOFT_DEVICE = $(SDK_ROOT)/components/softdevice/s340/hex/ANT_s340_nrf52840_6.1.1.hex
 endif
+
+$(OUTPUT_DIRECTORY)/nrf52840_xxaa.out: \
+LINKER_SCRIPT  := secure_bootloader_gcc_nrf52.ld
+
 
 
 # Source files common to all targets
