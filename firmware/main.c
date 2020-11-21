@@ -60,10 +60,15 @@
 #include "app_error_weak.h"
 #include "nrf_bootloader_info.h"
 #include "nrfx.h"
-#include "app_timer.h"
 #include "nrf_drv_clock.h"
 #include "nrf_delay.h"
 #include "nrf_power.h"
+#include "app_button.h"
+#include "custom_board.h"
+#include "pins.h"
+#include "nrf_gpio.h"
+#include "nrf_drv_gpiote.h"
+bool button_pressed = false;
 
 static void do_reset(void)
 {
@@ -141,13 +146,68 @@ static void dfu_observer(nrf_dfu_evt_type_t evt_type)
         break;
     }
 }
+void in_pin_handler(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
+{
+    switch (action)
+    {
+    case NRF_GPIOTE_POLARITY_LOTOHI:
+    {
+        //immediately load the application
+        nrf_bootloader_app_start();
+    }
+    break;
+    case NRF_GPIOTE_POLARITY_HITOLO:
+        break;
+    case NRF_GPIOTE_POLARITY_TOGGLE:
+        break;
+    }
+}
+static void gpio_init(void)
+{
+    ret_code_t err_code;
+
+    err_code = nrf_drv_gpiote_init();
+    APP_ERROR_CHECK(err_code);
+
+    nrf_drv_gpiote_in_config_t in_config = GPIOTE_CONFIG_IN_SENSE_LOTOHI(true);
+    in_config.pull = NRF_GPIO_PIN_PULLUP;
+
+    err_code = nrf_drv_gpiote_in_init(PLUS__PIN, &in_config, in_pin_handler);
+    nrf_drv_gpiote_in_event_enable(PLUS__PIN, true);
+
+    err_code = nrf_drv_gpiote_in_init(MINUS__PIN, &in_config, in_pin_handler);
+    nrf_drv_gpiote_in_event_enable(MINUS__PIN, true);
+
+    err_code = nrf_drv_gpiote_in_init(ENTER__PIN, &in_config, in_pin_handler);
+    nrf_drv_gpiote_in_event_enable(ENTER__PIN, true);
+
+    err_code = nrf_drv_gpiote_in_init(BUTTON_1, &in_config, in_pin_handler);
+    nrf_drv_gpiote_in_event_enable(BUTTON_1, true);
+
+    err_code = nrf_drv_gpiote_in_init(STANDBY__PIN, &in_config, in_pin_handler);
+    nrf_drv_gpiote_in_event_enable(STANDBY__PIN, true);
+
+    APP_ERROR_CHECK(err_code);
+}
 
 /**@brief Function for application main entry. */
 int main(void)
 {
-    uint32_t ret_val;
 
-    // Protect MBR and bootloader code from being overwritten.
+    ret_code_t ret_val;
+
+    gpio_init(); //initialize the gpio an check the status of the bootloader pins
+    if ((nrf_gpio_pin_read(PLUS__PIN) == 0) ||
+        (nrf_gpio_pin_read(MINUS__PIN) == 0) ||
+        (nrf_gpio_pin_read(ENTER__PIN) == 0) ||
+        (nrf_gpio_pin_read(STANDBY__PIN) == 0) ||
+        (nrf_gpio_pin_read(BUTTON_1) == 0))
+    {
+        //button is pressed on bootloader entry so start the timer
+        button_pressed = true;
+    }
+
+    //Protect MBR and bootloader code from being overwritten.
     ret_val = nrf_bootloader_flash_protect(0, MBR_SIZE, false);
     APP_ERROR_CHECK(ret_val);
     ret_val = nrf_bootloader_flash_protect(BOOTLOADER_START_ADDR, BOOTLOADER_SIZE, false);
@@ -155,22 +215,28 @@ int main(void)
 
     if (LEDS_NUMBER > 0)
     {
-
         bsp_board_init(BSP_INIT_LEDS);
         ret_val = bsp_init(BSP_INIT_LEDS, NULL);
         APP_ERROR_CHECK(ret_val);
     }
 
-    ret_val = app_timer_init();
-    APP_ERROR_CHECK(ret_val);
-
     // Initiate the bootloader
     ret_val = nrf_bootloader_init(dfu_observer);
     APP_ERROR_CHECK(ret_val);
+    // if here then no dfu mode initiated
+    if (button_pressed)
+    {
+        nrf_delay_ms(10000);                          //wait 10 seconds before going to dfu mode
+        nrf_power_gpregret_set(BOOTLOADER_DFU_START); //set the dfu register
+        nrf_delay_ms(1000);                           //wait for write to complete
+        do_reset();
+    }
 
-    // Either there was no DFU functionality enabled in this project or the DFU module detected
-    // no ongoing DFU operation and found a valid main application.
-    // Boot the main application.
+    //if the program is here there was either
+    //-no DFU requested in the bootloader
+    // or the DFU module detected no ongoing DFU operation and found a valid main application.
+    //so, load the installed apllication
     nrf_bootloader_app_start();
-}
 
+    return 0;
+}
